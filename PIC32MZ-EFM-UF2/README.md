@@ -6,6 +6,9 @@
 ```ini
 custom_linker = bootloader.ld 
 ```
+Compile and Upload bootloader ( ICSP )<br>
+Hold button ( Curioasity S1 ) to enter in boot mode<br>
+Upload application.uf2 ....
 
 ## Application
 ```ini
