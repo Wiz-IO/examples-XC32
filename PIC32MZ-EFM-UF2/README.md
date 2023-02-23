@@ -9,7 +9,7 @@ custom_linker = bootloader.ld
 
 ## Application
 ```ini
-upload_protocol = UF2
+upload_protocol = UF2 ; or copy / paste to usb drive
 custom_linker   = application.ld
 ```
 
