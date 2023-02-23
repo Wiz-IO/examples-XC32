@@ -2,7 +2,7 @@
 
 ![pic32mz](https://raw.githubusercontent.com/Wiz-IO/examples-XC32/main/PIC32MZ-EFM-UF2/UF2.jpg)
 
-## Bootloader
+## Bootloader ( v1.0 )
 ```ini
 custom_linker = bootloader.ld 
 ```
