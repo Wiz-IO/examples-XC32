@@ -12,6 +12,8 @@ extern "C"
 ///////////////////////////////////////////////////////////////////////////////
 #ifndef USER_LCD            // ILI9341
 
+#define LCD_USE_DMA
+
 #define LCD_WIDTH           (240u)
 #define LCD_HEIGHT          (320u)
 

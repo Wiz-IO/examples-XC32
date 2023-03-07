@@ -1,6 +1,10 @@
 import os
 
 filename = "SABOTAGE.BIN"
+start = "1D00"
+
+#filename = "MARIO.BIN"
+#start = "0803"
 
 rom_file = open(filename, "rb") 
 rom_bytes = rom_file.read()  
@@ -15,12 +19,11 @@ output_file.write("#define GAME_ROM_H\n\n")
 
 output_file.write("// %s\n\n" % filename)
 
-output_file.write("// #6 1D00\n")
+output_file.write("#define GAME_ADDRESS 0x%s\n\n" % start)
 
-output_file.write("#define GAME_ADDRESS 0x1D00\n\n")
 output_file.write("#define GAME_SIZE %d\n\n" % os.stat(filename).st_size )
 
-output_file.write("const unsigned char GAME[] = {\n")
+output_file.write("const unsigned char GAME[GAME_SIZE] = {\n")
 
 for i in range(0, len(rom_array) ):
     output_file.write( rom_array[i] +', ' )

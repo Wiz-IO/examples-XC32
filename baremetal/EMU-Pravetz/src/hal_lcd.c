@@ -3,11 +3,8 @@
 #include <sys/kmem.h>
 #include <stdbool.h>
 #include <stdio.h>
-
-#ifdef LCD_USE_DMA
-#include <hal_dma.h>
 #include <hal_irq.h>
-#endif
+#include <sys_devcon.h>
 
 #undef PRINTF
 #define PRINTF printf
@@ -25,96 +22,133 @@ const uint8_t ILI9341_commands[] = {
 
 #ifdef LCD_USE_DMA
 
-#ifndef LCD_BUFFER_SIZE
-#define LCD_BUFFER_SIZE (2)
-#endif
-#if LCD_BUFFER_SIZE < 2
-#error LCD_BUFFER_SIZE must be minimum 2
-#endif
-static uint16_t __attribute__((coherent, aligned(32))) dma_buffer[LCD_BUFFER_SIZE];
+#undef DMA_MAX_SIZE
+#define DMA_MAX_SIZE (65536u)
 
-static DMA_INST_T *TX = NULL;
+static uint16_t __attribute__((aligned(4))) dma_buffer[2]; // coherent
 
-void tx_cb(void *param)
+static uint32_t translate_address(const void *address)
 {
-    irq_setIE(TX->irq, false);
-}
+    uint32_t A = (uint32_t)address;
 
-static void SPI_DMA_INIT(void)
-{
-    TX = DMA_Channel(1, DMA_OPEN_DEFAULT, tx_cb);
-    if (TX)
+    /* Set the source address */
+    /* Check if the address lies in the KSEG2 for MZ devices */
+    if ((A >> 29) == 0x6)
     {
-        DMA_SrcDst(TX->dma, dma_buffer, 2, &LCD_SPI_BUF, 2, 2);
-        TX->dma->econ.CHSIRQ = LCD_SPI_VECTOR;
-        TX->dma->econ.SIRQEN = 1;
+        if ((A >> 28) == 0xc)
+        {
+            // EBI Address translation
+            A = ((A | 0x20000000) & 0x2FFFFFFF);
+        }
+        else if ((A >> 28) == 0xD)
+        {
+            // SQI Address translation
+            A = ((A | 0x30000000) & 0x3FFFFFFF);
+        }
+    }
+    else if ((A >> 29) == 0x7)
+    {
+        if ((A >> 28) == 0xE)
+        {
+            // EBI Address translation
+            A = ((A | 0x20000000) & 0x2FFFFFFF);
+        }
+        else if ((A >> 28) == 0xF)
+        {
+            // SQI Address translation
+            A = ((A | 0x30000000) & 0x3FFFFFFF);
+        }
     }
     else
     {
-        PRINTF("[ERROR] SPI_DMA_INIT\n");
+        /* KSEG0 / KSEG1 */
+        if (IS_KVA0(A))
+            A = KVA_TO_PA(KVA0_TO_KVA1(A));
+        else
+            A = KVA_TO_PA(A);
     }
+    return A;
 }
+
+static inline void DMA_ChannelEnable(int dma_intr_mask)
+{
+    IRQ_Clear(_DMA0_VECTOR);
+    IRQ_Enable(_DMA0_VECTOR);
+    DCH0INT = dma_intr_mask;
+    DCH0CONSET = _DCH0CON_CHEN_MASK;
+}
+
+static inline void DMA_ChannelDisable()
+{
+    IRQ_Disable(_DMA0_VECTOR);
+    IRQ_Clear(_DMA0_VECTOR);
+    DCH0CONCLR = _DCH0CON_CHEN_MASK;
+    DCH0INTCLR = -1;
+}
+
+static inline void DMA_Init(void)
+{
+    IRQ_Disable(_DMA0_VECTOR);
+    IRQ_Clear(_DMA0_VECTOR);
+    IRQ_Priority(_DMA0_VECTOR, 4, 0); // IPL4AUTO
+
+    DCH0CON = 1; // DMA_PRIO
+    DCH0ECONCLR = -1;
+    DCH0INTCLR = -1;
+
+    DCH0ECONbits.CHSIRQ = _SPI1_TX_VECTOR;
+    DCH0ECONbits.SIRQEN = 1;
+
+    DCH0DSA = KVA_TO_PA(&LCD_SPI_BUF);
+    DCH0DSIZ = 2;
+    DCH0CSIZ = 2;
+
+    DMACONSET = 0x8000; // enale DMA
+}
+
+void __attribute__((vector(_DMA0_VECTOR), interrupt(IPL4AUTO), nomips16)) DMA_0_Handler()
+{
+    IRQ_Disable(_DMA0_VECTOR);
+}
+
+// LCD DMA ////////////////////////////////////////////////////////////////////
 
 static void SPI_DMA_START(void)
 {
-    DMA_ChannelEnable(TX->dma, false, 0);
-    irq_setIF(LCD_SPI_VECTOR, false);
-    irq_setIF(TX->irq, false);
-    irq_setIE(TX->irq, true);
-    DMA_ChannelEnable(TX->dma, true, _DCH0INT_CHBCIE_MASK);
-    while (irq_getIE(TX->irq))
+    DMA_ChannelEnable(_DCH0INT_CHBCIE_MASK);
+    while (IRQ_IsEnabled(_DMA0_VECTOR))
         continue;
 }
 
-static size_t SPI_DMA_FILL(uint32_t data, uint32_t data_size, size_t size_bytes)
+static size_t SPI_DMA_FILL(uint16_t color, size_t size_bytes)
 {
-    if (size_bytes)
-    {
-        if (size_bytes > 65536u)
-            size_bytes = 65536u;
-        TX->dma->ssiz = size_bytes;
-        uint16_t *p = dma_buffer;
-        uint32_t s = size_bytes / data_size;
-        while (s--)
-            *p++ = data;
-        TX->dma->ssa = KVA_TO_PA(dma_buffer);
-        SPI_DMA_START();
-    }
-    else
-    {
-        PRINTF("[ERROR] SPI_DMA_FILL\n");
-    }
+    if (size_bytes > sizeof(dma_buffer))
+        size_bytes = sizeof(dma_buffer);
+    for (int i = 0; i < size_bytes / 2; i++)
+        dma_buffer[i] = color;
+    DMA_ChannelDisable();
+    DCH0SSA = translate_address(dma_buffer);
+    DCH0SSIZ = size_bytes;
+    SYS_DEVCON_DataCacheClean((uint32_t)dma_buffer, sizeof(dma_buffer));
+    DMA_ChannelEnable(_DCH0INT_CHBCIE_MASK);
+    while (IRQ_IsEnabled(_DMA0_VECTOR))
+        continue;
+    SYS_DEVCON_DataCacheInvalidate((uint32_t)dma_buffer, sizeof(dma_buffer));
     return size_bytes;
 }
 
 static size_t SPI_DMA_DATA(const void *buffer_bytes, size_t size_bytes)
 {
-    if (size_bytes && buffer_bytes)
-    {
-        if (size_bytes > 65536u)
-            size_bytes = 65536u;
-        TX->dma->ssiz = size_bytes;
-        if (IS_KVA01(buffer_bytes)) // IS RAM
-        {
-            if (IS_KVA0(buffer_bytes))
-            {
-                TX->dma->ssa = KVA_TO_PA(KVA0_TO_KVA1(buffer_bytes));
-            }
-            else
-            {
-                TX->dma->ssa = KVA_TO_PA(buffer_bytes);
-            }
-        }
-        else // IS FLASH
-        {
-            PRINTF("[ERROR] TODO: FROM FLASH\n");
-        }
-        SPI_DMA_START();
-    }
-    else
-    {
-        PRINTF("[ERROR] SPI_DMA_DATA\n");
-    }
+    if (size_bytes > DMA_MAX_SIZE)
+        size_bytes = DMA_MAX_SIZE;
+    DMA_ChannelDisable();
+    DCH0SSA = translate_address(buffer_bytes);
+    DCH0SSIZ = size_bytes;
+    SYS_DEVCON_DataCacheClean((uint32_t)buffer_bytes, size_bytes);
+    DMA_ChannelEnable(_DCH0INT_CHBCIE_MASK);
+    while (IRQ_IsEnabled(_DMA0_VECTOR))
+        continue;
+    SYS_DEVCON_DataCacheInvalidate((uint32_t)buffer_bytes, size_bytes);
     return size_bytes;
 }
 
@@ -147,14 +181,14 @@ static uint16_t spi_send(uint16_t tx)
 
 static void spi_init(void)
 {
-#ifdef LCD_SPI_SET_PINS   
+#ifdef LCD_SPI_SET_PINS
     LCD_SPI_SET_PINS();
-#endif    
+#endif
     LCD_SPI_CON = 0;
     LCD_SPI_BRG = LCD_SPI_BRG_VAL;
     LCD_SPI_CON = 0x00018265;
 #ifdef LCD_USE_DMA
-    SPI_DMA_INIT();
+    DMA_Init();
 #endif
 }
 
@@ -177,34 +211,38 @@ void lcd_write_data(uint16_t d, bool mode)
 void lcd_setAddrWindow(uint16_t xs, uint16_t ys, uint16_t xe, uint16_t ye)
 {
     lcd_write_cmd(0x2A); // ILI9341_CASET
-#if LCD_USE_DMA
+
+#ifdef LCD_USE_DMA
     LCD_DC_DATA();
     spi_mode(SPI_WORD);
     dma_buffer[0] = xs;
     dma_buffer[1] = xe;
-    SPI_DMA_DATA(dma_buffer, sizeof(uint32_t));
+    SPI_DMA_DATA(dma_buffer, 4);
 #else
     lcd_write_data(xs, SPI_WORD);
     lcd_write_data(xe, SPI_WORD);
 #endif
     lcd_write_cmd(0x2B); // ILI9341_PASET
-#if LCD_USE_DMA
+
+#ifdef LCD_USE_DMA
     LCD_DC_DATA();
     spi_mode(SPI_WORD);
     dma_buffer[0] = ys;
     dma_buffer[1] = ye;
-    SPI_DMA_DATA(dma_buffer, sizeof(uint32_t));
+    SPI_DMA_DATA(dma_buffer, 4);
 #else
     lcd_write_data(ys, SPI_WORD);
     lcd_write_data(ye, SPI_WORD);
 #endif
+
     lcd_write_cmd(0x2C); // ILI9341_RAMWR
     LCD_DC_DATA();
 }
 
 void lcd_setRotation(uint8_t rot)
 {
-    lcd_write_cmd(0x36); // ILI9341_MADCTL
+    if (rot < 4)
+        lcd_write_cmd(0x36); // ILI9341_MADCTL
     switch (rot & 3)
     {
     case 0:
@@ -234,8 +272,6 @@ void lcd_fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
 {
     if (x >= lcd_width || y >= lcd_height || w <= 0 || h <= 0)
         return;
-    // if (x + w - 1 >= lcd_width) w = lcd_width - x;
-    // if (y + h - 1 >= lcd_height) h = lcd_height - y;
     lcd_setAddrWindow(x, y, x + w - 1, y + h - 1);
     size_t size = (size_t)w * (size_t)h;
 #ifndef LCD_USE_DMA
@@ -244,7 +280,7 @@ void lcd_fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
 #else
     spi_mode(SPI_WORD);
     while (size)
-        size -= SPI_DMA_FILL(color, sizeof(short), size * sizeof(short)) / sizeof(short);
+        size -= SPI_DMA_FILL(color, size << 1) >> 1;
 #endif
 }
 
@@ -260,8 +296,8 @@ void lcd_drawImage(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *b
     while (size--) // slow
         lcd_write_data(*buffer++, SPI_WORD);
 #else
-    spi_mode(SPI_WORD);
     size_t sent;
+    spi_mode(SPI_WORD);
     while (size)
     {
         sent = SPI_DMA_DATA(buffer, size << 1) >> 1;
@@ -271,7 +307,7 @@ void lcd_drawImage(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *b
 #endif
 }
 
-void lcd_commands_init(const uint8_t *address)
+static void lcd_commands_init(const uint8_t *address)
 {
     uint8_t *addr = (uint8_t *)address;
     uint8_t numCommands, numArgs;
@@ -307,8 +343,7 @@ void lcd_init(int rot)
     LCD_RST_1();
     LCD_DELAY(150);
     lcd_commands_init(LCD_CONFIG);
-    if (rot > -1)
-        lcd_setRotation(rot);
+    lcd_setRotation(rot);
 }
 
 // EOF ////////////////////////////////////////////////////////////////////////

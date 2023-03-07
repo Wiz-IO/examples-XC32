@@ -40,6 +40,7 @@ void video_buffer_get(uint16_t *buf);
 uint16_t video_address_get(void);
 void video_line_data_get(uint8_t *video_line_data);
 
-void lcd_render_line(void);
+uint32_t lcd_render_line(void);
+uint32_t lcd_render(void);
 
 #endif /* __VIDEO_H__ */

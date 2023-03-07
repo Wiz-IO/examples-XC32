@@ -1121,58 +1121,47 @@ void __assert(int expr, int line, const char *file, char *msg)
 /* internal CPU context */
 static mcu6502_context cpu;
 static int remaining_cycles = 0; /* so we can release timeslice */
+
 /* memory region pointers */
 static uint8_t *ram = NULL, *stack = NULL;
 static uint8_t null_page[MCU6502_BANKSIZE];
 
-/*
-** Zero-page helper macros
-*/
-
 #define ZP_READBYTE(addr) ram[(addr)]
+
 #define ZP_WRITEBYTE(addr, value) ram[(addr)] = (uint8_t)(value)
 
 INLINE uint32_t zp_readword(register uint8_t address) /// WizIO PIC32 not support byte alignment
 {
-   uint8_t *p = (uint8_t *)(ram + address);
-   return (uint32_t)(p[0] | (p[1] << 8));
+   return (uint32_t)(cpu.memory[address] | (cpu.memory[address + 1] << 8));
 }
 
 INLINE uint32_t bank_readword(register uint32_t address) /// WizIO PIC32 not support byte alignment
 {
-   uint8_t *p = (uint8_t *)(cpu.mem_page[address >> MCU6502_BANKSHIFT] + (address & MCU6502_BANKMASK));
-   uint32_t v = (uint32_t)(p[0] | (p[1] << 8));
-   return v;
+   return (uint32_t)(cpu.memory[address] | (cpu.memory[address + 1] << 8));
 }
 
 INLINE uint8_t bank_readbyte(register uint32_t address)
 {
-   return cpu.mem_page[address >> MCU6502_BANKSHIFT][address & MCU6502_BANKMASK];
-}
-
-uint8_t *bank_get_mem(uint32_t address)
-{
-   return &cpu.mem_page[address >> MCU6502_BANKSHIFT][address & MCU6502_BANKMASK];
+   return cpu.memory[address];
 }
 
 INLINE void bank_writebyte(register uint32_t address, register uint8_t value)
 {
-   cpu.mem_page[address >> MCU6502_BANKSHIFT][address & MCU6502_BANKMASK] = value;
+   cpu.memory[address] = value;
+}
+
+uint8_t *mem_get_ptr(uint32_t address)
+{
+   return &cpu.memory[address];
 }
 
 /* read a byte of 6502 memory */
-static uint8_t mem_readbyte(uint32_t address)
+uint8_t mem_readbyte(uint32_t address)
 {
    mcu6502_memread *mr;
-
-   // printf("read_handler: %04X\n", (int)address); // 0x900
    for (mr = cpu.read_handler; mr->min_range != 0xFFFFFFFF; mr++)
-   {
       if (address >= mr->min_range && address <= mr->max_range)
-      {
          return mr->read_func(address);
-      }
-   }
 
    /* return paged memory */
    return bank_readbyte(address);
@@ -1182,8 +1171,6 @@ static uint8_t mem_readbyte(uint32_t address)
 void mem_writebyte(uint32_t address, uint8_t value)
 {
    mcu6502_memwrite *mw;
-
-   // printf("write_handler: %04X\n", (int)address);
    for (mw = cpu.write_handler; mw->min_range != 0xFFFFFFFF; mw++)
    {
       if (address >= mw->min_range && address <= mw->max_range)
@@ -1200,43 +1187,26 @@ void mem_writebyte(uint32_t address, uint8_t value)
 /* set the current context */
 void mcu6502_setcontext(mcu6502_context *context)
 {
-   int loop;
-
    ASSERT(context);
-
    cpu = *context;
-
-   /* set dead page for all pages not pointed at anything */
-   for (loop = 0; loop < MCU6502_NUMBANKS; loop++)
-   {
-      if (NULL == cpu.mem_page[loop])
-         cpu.mem_page[loop] = null_page;
-   }
-
-   ram = cpu.mem_page[0]; /* quick zero-page/RAM references */
+   if (NULL == cpu.memory)
+      cpu.memory = null_page;
+   ram = cpu.memory; /* quick zero-page/RAM references */
    stack = ram + STACK_OFFSET;
 }
 
 /* get the current context */
 void mcu6502_getcontext(mcu6502_context *context)
 {
-   int loop;
-
    ASSERT(context);
-
    *context = cpu;
-
-   /* reset dead pages to null */
-   for (loop = 0; loop < MCU6502_NUMBANKS; loop++)
-   {
-      if (null_page == context->mem_page[loop])
-         context->mem_page[loop] = NULL;
-   }
+   if (null_page == context->memory)
+      context->memory = NULL;
 }
 
-uint8_t * mcu6502_get_page(int page)
+mcu6502_context *mcu6502_get_context(void)
 {
-   return cpu.mem_page[page];
+   return &cpu;
 }
 
 /* DMA a byte of data from ROM */

@@ -9,12 +9,11 @@
 #define mCTSetIntPriority(priority) (IPC0CLR = _IPC0_CTIP_MASK, IPC0SET = ((priority) << _IPC0_CTIP_POSITION))
 #define mCTSetIntSubPriority(subPriority) (IPC0CLR = _IPC0_CTIS_MASK, IPC0SET = ((subPriority) << _IPC0_CTIS_POSITION))
 
-void (*osd_timer_handler)(uint32_t ms) = NULL;
 static volatile uint32_t gMillis = 0;
 static volatile uint32_t gOldCoreTime = 0;
+
 void __ISR(_CORE_TIMER_VECTOR, IPL4AUTO) CoreTimerHandler(void)
 {
-
     uint32_t current = _CP0_GET_COUNT();
     uint32_t elapsed = current - gOldCoreTime;
     uint32_t increment = elapsed / CORE_TIMER_INTERRUPT_TICKS;
@@ -22,18 +21,13 @@ void __ISR(_CORE_TIMER_VECTOR, IPL4AUTO) CoreTimerHandler(void)
     _CP0_SET_COMPARE(current + CORE_TIMER_INTERRUPT_TICKS);
     mCTClearIntFlag();
     gOldCoreTime = current;
-
-    // if (gMillis % 100 == 0) LATEINV = 1 << LED;
-        
-    if (osd_timer_handler)
-        osd_timer_handler(gMillis);
 }
 
 uint32_t millis(void) { return gMillis; }
 
 uint32_t micros(void)
 {
-#if 0
+#if 1
     asm volatile("di");
     uint32_t result = millis() * 1000;
     uint32_t current = _CP0_GET_COUNT();

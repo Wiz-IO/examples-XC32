@@ -83,15 +83,13 @@ typedef struct
 
 typedef struct
 {
-   uint8_t *mem_page[MCU6502_NUMBANKS]; /* [ 16 ] ... memory page pointers */
+   uint8_t *memory; // pointer
 
    mcu6502_memread *read_handler;
    mcu6502_memwrite *write_handler;
 
    uint32_t pc_reg;
-   uint8_t a_reg, p_reg;
-   uint8_t x_reg, y_reg;
-   uint8_t s_reg;
+   uint8_t a_reg, p_reg, x_reg, y_reg, s_reg;
 
    uint8_t jammed; /* is processor jammed? */
 
@@ -119,7 +117,11 @@ extern "C"
    extern void mcu6502_setcontext(mcu6502_context *cpu);
    extern void mcu6502_getcontext(mcu6502_context *cpu);
 
-   uint8_t *bank_get_mem(uint32_t address);
+   /* MOD: WizIO */
+   uint8_t *mem_get_ptr(uint32_t address);
+   uint8_t mem_readbyte(uint32_t address);
+   void mem_writebyte(uint32_t address, uint8_t value);
+   mcu6502_context *mcu6502_get_context(void);
 
 #ifdef __cplusplus
 }

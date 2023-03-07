@@ -5,7 +5,9 @@
 #include "hal_lcd.h"
 #include "video.h"
 #include "programs.h"
+
 void mcu_game_load(void);
+void mcu_game_load_ex(void);
 
 // MAPER //////////////////////////////////////////////////////////////////////
 
@@ -108,35 +110,15 @@ static mcu6502_memwrite default_writehandler[] = {
 
 void mcu_init(const uint8_t *rom, uint32_t address)
 {
-    mcu6502_context mmc_cpu;
-    mcu6502_getcontext(&mmc_cpu);
-
-    int page;
-    page = address >> MCU6502_BANKSHIFT; // 12
-    printf("PAGE: %d\n", page);
-    for (int i = 0; i < page; i++)
-    {
-        mmc_cpu.mem_page[i] = calloc(MCU6502_BANKSIZE, 1); // create RAM
-        if (NULL == mmc_cpu.mem_page[i])
-        {
-            printf("[ERROR] MALLOC\n");
-            abort();
-        }
-        else
-        {
-            printf("CREATE RAM: %02d %p\n", i, mmc_cpu.mem_page[i]);
-        }
-    }
-
+    mcu6502_context p;
+    mcu6502_getcontext(&p);
     switch (address)
     {
     case 0xD000:
-        mmc_cpu.mem_page[page + 0] = (uint8_t *)&rom[0 * MCU6502_BANKSIZE]; // x 4096
-        mmc_cpu.mem_page[page + 1] = (uint8_t *)&rom[1 * MCU6502_BANKSIZE];
-        mmc_cpu.mem_page[page + 2] = (uint8_t *)&rom[2 * MCU6502_BANKSIZE];
-        mmc_cpu.read_handler = default_readhandler;
-        mmc_cpu.write_handler = default_writehandler;
-        mcu6502_setcontext(&mmc_cpu);
+        p.memory = calloc(MCU6502_BANKSIZE * 16, 1);
+        memcpy(&p.memory[address], rom, MCU6502_BANKSIZE * 3);
+        p.read_handler = default_readhandler;
+        p.write_handler = default_writehandler;
         break;
 
     default:
@@ -144,17 +126,17 @@ void mcu_init(const uint8_t *rom, uint32_t address)
         abort();
         break;
     }
-    // dumpc(rom, MCU6502_BANKSIZE*3);
+
+    mcu6502_setcontext(&p);
 }
 
 const unsigned char MCU_ROM_DATA[]; // ROM_DATA.h
 
-static void checkfiq(int cycles)
+static void checkfiq(int cycles) // need ?
 {
     static uint32_t fiq_cycles = 0;
     static bool fiq_occurred = 0;
     static uint8_t fiq_state = 0;
-
     fiq_cycles -= cycles;
     if (fiq_cycles <= 0)
     {
@@ -169,18 +151,21 @@ static void checkfiq(int cycles)
 
 void mcu_process(void)
 {
-    static int cnt = 0;
+    uint32_t timer = 0;
     video_init();
     mcu_init(MCU_ROM_DATA, MCU_ROM_ADDRESS);
     mcu6502_reset();
     mcu_game_load();
+
     while (1)
     {
-        int elapsed_cycles = mcu6502_execute(16);
+        int elapsed_cycles = mcu6502_execute(7); // ?
         checkfiq(elapsed_cycles);
 
-        if (cnt % 100 == 0) // timer ?
-            lcd_render_line();
-        cnt++;
+        if (millis() - timer > 10) // ? Hz
+        {
+            lcd_render(); // 25 mSec ( 40 frames )
+            timer = millis();
+        }
     }
 }

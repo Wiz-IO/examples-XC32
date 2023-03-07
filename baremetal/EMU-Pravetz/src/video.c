@@ -38,19 +38,17 @@ const uint16_t hcolor[] = {
 typedef enum
 {
     VIDEO_TEXT_MODE = 0,
-    VIDEO_LRES = 1,    
-    VIDEO_GRAPHICS_MODE = 2,
-    VIDEO_HRES = 3,
+    VIDEO_GRAPHICS_MODE = 1,
 
     VIDEO_PAGE_1 = 0,
     VIDEO_PAGE_2 = 1,
 } VideoModes;
 
-static uint8_t video_char_set[CHARACTER_SET_ROM_SIZE];
-static uint16_t video_buffer[VIDEO_BUFFER_SIZE] = {0};
+static uint16_t __attribute__((aligned(4))) frame_buffer[VIDEO_BUFFER_SIZE] = {0};
+static uint8_t font[CHARACTER_SET_ROM_SIZE];
 static uint8_t video_mode = VIDEO_TEXT_MODE;
 static uint8_t video_page = VIDEO_PAGE_1;
-static uint16_t video_scan_line;
+static uint16_t scan_line = 0;
 
 static unsigned char reverse(unsigned char b)
 {
@@ -62,16 +60,16 @@ static unsigned char reverse(unsigned char b)
 
 void video_init(void)
 {
-    memcpy(video_char_set, ROM_CHAR, CHARACTER_SET_ROM_SIZE);
+    memcpy(font, ROM_CHAR, CHARACTER_SET_ROM_SIZE);
 }
 
 void video_update(uint16_t address)
 {
     if (address >= 0xC050 && address < 0xC058)
     {
-        printf("VIDEO MODE: %04X\n", (int)address);
+        // printf("VIDEO MODE: %04X\n", (int)address);
     }
-    // https://www.kreativekorp.com/miscpages/a2info/iomemory.shtml
+
     switch (address)
     {
     case 0xC050: // Display Graphics
@@ -91,10 +89,8 @@ void video_update(uint16_t address)
         video_page = VIDEO_PAGE_2;
         break;
     case 0xC056: // Display LoRes Graphics
-        video_mode |= VIDEO_LRES;
         break;
     case 0xC057: // Display HiRes Graphics
-        video_mode |= VIDEO_HRES;
         break;
     }
 }
@@ -147,7 +143,7 @@ void video_hires_line_update(uint16_t video_line_number, uint8_t *video_line_dat
                         color = color_offset + address_odd + 1 - (i & 1) + 1;
                     }
                 }
-                video_buffer[j * 7 + i] |= hcolor[color];
+                frame_buffer[j * 7 + i] |= hcolor[color];
             }
         }
     }
@@ -180,7 +176,7 @@ void video_text_line_update(uint16_t video_line_number, uint8_t *video_line_data
 #endif
             rom_char = text_char * TEXT_BYTES;
             rom_char_offset = video_line_number & TEXT_BYTES_MASK;
-            data = video_char_set[rom_char + rom_char_offset];
+            data = font[rom_char + rom_char_offset];
 
 #ifdef CHARSET_REVERSE
             // reversed with pytnon script
@@ -193,7 +189,7 @@ void video_text_line_update(uint16_t video_line_number, uint8_t *video_line_data
                 pixel = (data >> (i)) & 1;
                 if (pixel)
                     color = BLACK;
-                video_buffer[j * 7 + i] |= hcolor[color];
+                frame_buffer[j * 7 + i] |= hcolor[color];
             }
         }
     }
@@ -201,17 +197,17 @@ void video_text_line_update(uint16_t video_line_number, uint8_t *video_line_data
 
 void video_scan_line_set(uint16_t line)
 {
-    video_scan_line = line;
+    scan_line = line;
 }
 
 void video_buffer_clear(void)
 {
-    memset(video_buffer, 0, VIDEO_BUFFER_SIZE * 2);
+    memset(frame_buffer, 0, VIDEO_BUFFER_SIZE * 2);
 }
 
 void video_buffer_get(uint16_t *buffer)
 {
-    memcpy(buffer, video_buffer, VIDEO_BUFFER_SIZE * 2);
+    memcpy(buffer, frame_buffer, VIDEO_BUFFER_SIZE * 2);
 }
 
 uint16_t video_address_get(void)
@@ -220,40 +216,36 @@ uint16_t video_address_get(void)
     if (video_mode == VIDEO_TEXT_MODE)
     {
         address = 0x400 + (0x400 * video_page) +
-                  (((video_scan_line >> 3) & 0x07) * SCREEN_LINE_OFFSET) +
-                  ((video_scan_line >> 6) * VIDEO_SEGMENT_OFFSET);
+                  (((scan_line >> 3) & 0x07) * SCREEN_LINE_OFFSET) +
+                  ((scan_line >> 6) * VIDEO_SEGMENT_OFFSET);
     }
     else
     {
         address = 0x2000 + (0x2000 * video_page) +
-                  (video_scan_line & 7) * 0x400 +
-                  ((video_scan_line >> 3) & 7) * 0x80 +
-                  (video_scan_line >> 6) * 0x28;
+                  (scan_line & 7) * 0x400 +
+                  ((scan_line >> 3) & 7) * 0x80 +
+                  (scan_line >> 6) * 0x28;
     }
     return address;
 }
 
 void video_line_data_get(uint8_t *video_line_data)
 {
-    if (video_mode < VIDEO_GRAPHICS_MODE)
+    if (video_mode == VIDEO_TEXT_MODE)
     {
-        video_text_line_update(video_scan_line, video_line_data);
+        video_text_line_update(scan_line, video_line_data);
     }
     else
     {
-        video_hires_line_update(video_scan_line, video_line_data);
+        video_hires_line_update(scan_line, video_line_data);
     }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-static uint8_t video_line_data[VIDEO_BYTES_PER_LINE] = {0}; // [40]
+static uint8_t line_data[VIDEO_BYTES_PER_LINE] = {0}; // [40]
 static uint16_t video_address = 0x2000;
-static uint16_t scan_line = 0;
 
-#define VIDEO_RESOLUTION_X 280
-#define VIDEO_RESOLUTION_Y 192
-static uint16_t video_buffer[VIDEO_RESOLUTION_X];
 static void draw_scanline(uint16_t *bmp, int scanline)
 {
     if (scanline < 0 || scanline >= 240)
@@ -263,18 +255,38 @@ static void draw_scanline(uint16_t *bmp, int scanline)
     lcd_drawImage(xoffset, scanline + yoffset, VIDEO_RESOLUTION_X, 1, bmp);
 }
 
-void lcd_render_line(void)
+uint32_t lcd_render_line(void)
 {
+    uint32_t begin = micros();
     video_scan_line_set(scan_line);
     video_buffer_clear();
     video_address = video_address_get();
-    memcpy(video_line_data, bank_get_mem(video_address), VIDEO_BYTES_PER_LINE);
-    video_line_data_get(video_line_data);
-    video_buffer_get(video_buffer);
-    draw_scanline(video_buffer, scan_line);
+    memcpy(line_data, mem_get_ptr(video_address), VIDEO_BYTES_PER_LINE);
+    video_line_data_get(line_data);
+    video_buffer_get(frame_buffer);
+    draw_scanline(frame_buffer, scan_line);
     if (++scan_line > 192)
     {
         scan_line = 0;
         LATEINV = 1 << 4;
     }
+    return micros() - begin; // 102 uS
+}
+
+uint32_t lcd_render(void)
+{
+    uint32_t begin = millis();
+    for (int i = 0; i < VIDEO_RESOLUTION_Y; i++)
+    {
+        video_scan_line_set(i);
+        video_buffer_clear();
+        video_address = video_address_get();
+        memcpy(line_data, mem_get_ptr(video_address), VIDEO_BYTES_PER_LINE);
+        video_line_data_get(line_data);
+        video_buffer_get(frame_buffer);
+        draw_scanline(frame_buffer, i);
+    }
+
+    LATEINV = 1 << 4;
+    return millis() - begin; // 25 mS
 }

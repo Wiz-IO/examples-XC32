@@ -29,7 +29,7 @@ static char PROGRAM2[] =
     "80 NEXT\r"
     "RUN\r";
 
-static char PROGRAM3[] =
+static char PROGRAMx[] =
     "10 HGR\r"
     "20 FOR C = 0 TO 7\r"
     "30 FOR I = 0 TO 191 STEP 3\r"
@@ -41,5 +41,6 @@ static char PROGRAM3[] =
     "RUN\r";
 
 static char PROGRAM[] = "CALL -151\r1D00G\rN"; // run game
+
 
 #endif
