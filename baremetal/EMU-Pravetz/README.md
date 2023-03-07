@@ -4,7 +4,7 @@
 This is a **proof-of-concept** and not an official application note.<br>
 The example does not support sound and file system<br>
 Tested on Curiosity v1 board<br>
-Display is ILI9341 ( SPI 240 x 320, no-DMA )
+Display is ILI9341 ( SPI 240 x 320, SPI 50MHz, DMA ... 40 fps )
 
 [VIDEO](https://www.youtube.com/watch?v=D4u4xpfDgAM)
 
