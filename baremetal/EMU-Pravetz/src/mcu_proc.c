@@ -63,7 +63,7 @@ static uint8_t io_read(uint32_t address)
     else
     {
         // printf("io_read:  %04X\n", (int)address);
-        video_update(address);
+        video_update_switches(address);
     }
     return result;
 }
@@ -85,7 +85,7 @@ static void io_write(uint32_t address, uint8_t value)
     if (0xC000 == address) // I/O emulation.
         key = value;
     else
-        video_update(address);
+        video_update_switches(address);
 }
 
 static mcu6502_memread default_readhandler[] = {
@@ -152,19 +152,22 @@ static void checkfiq(int cycles) // need ?
 void mcu_process(void)
 {
     uint32_t timer = 0;
-    video_init();
+
+    video_init(); // TODO driver
+
     mcu_init(MCU_ROM_DATA, MCU_ROM_ADDRESS);
     mcu6502_reset();
-    mcu_game_load();
+
+    //mcu_game_load();
 
     while (1)
     {
-        int elapsed_cycles = mcu6502_execute(7); // ?
-        checkfiq(elapsed_cycles);
+        int elapsed_cycles = mcu6502_execute(16); // ?
+        //checkfiq(elapsed_cycles);
 
-        if (millis() - timer > 10) // ? Hz
+        if (millis() - timer > 20) // ? 50 Hz
         {
-            lcd_render(); // 25 mSec ( 40 frames )
+            video_render_screen(); // 25 mSec ( 40 frames )
             timer = millis();
         }
     }

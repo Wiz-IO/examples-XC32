@@ -61,12 +61,26 @@ extern                      const uint8_t ILI9341_commands[];
 #define LCD_SPI_BUF         CONCAT( SPI, LCD_SPI,  BUF)
 #define LCD_SPI_VECTOR      CONCAT(_SPI, LCD_SPI, _TX_VECTOR)
 
+///////////////////////////////////////////////////////////////////////////////
+
+#define RGBto565(r,g,b)     ((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)) 
+#define LCD_BLACK           0
+#define LCD_WHITE           0xFFFF
+#define LCD_RED             RGBto565(0xFF, 0x00, 0x00) 
+#define LCD_GREEN           RGBto565(0x00, 0xFF, 0x00) 
+#define LCD_BLUE            RGBto565(0x00, 0x00, 0xFF) 
+#define LCD_GRAY            RGBto565(0x40, 0x40, 0x40) 
+
 void lcd_init(int rot);
+uint16_t lcd_get_width();
+uint16_t lcd_get_height();
 void lcd_setRotation(uint8_t rot);
 void lcd_setAddrWindow(uint16_t xs, uint16_t ys, uint16_t xe, uint16_t ye);
 void lcd_fillScreen(uint16_t color);
 void lcd_fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
 void lcd_drawImage(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *buffer);
+
+void lcd_draw_scan_line(uint16_t *line_data, uint16_t scanline, int x, int y);
 
 #ifdef __cplusplus
 }

@@ -4,267 +4,303 @@
 #include "hal_lcd.h"
 #include "mcu6502.h"
 #include "video.h"
-
 #include "VIDEO_ROM.h"
 
-enum HCOLOR
+enum
 {
-    BLACK = 0,
-    PURPLE,
-    GREEN,
-    GREEN_1,
-    PURPLE_1,
-    BLUE,
-    ORANGE_0,
-    ORANGE_1,
-    BLUE_1,
-    WHITE,
-    HCOLOR_LENGTH,
+    S_TEXT = 0x0001,
+    S_MIXED = 0x0002,
+    S_HIRES = 0x0004,
+    S_PAGE2 = 0x0008,
+    S_80COL = 0x0010,
+    S_ALTCH = 0x0020,
+    S_80STORE = 0x0040,
+    S_DHIRES = 0x0080
 };
 
-const uint16_t hcolor[] = {
+static const uint16_t hcolor[] = {
     LCD_BLACK,
-    LCD_A_PURPLE,
-    LCD_A_GREEN,
-    LCD_A_GREEN,
-    LCD_A_PURPLE,
-    LCD_A_BLUE,
-    LCD_A_ORANGE,
-    LCD_A_ORANGE,
-    LCD_A_BLUE,
+    RGBto565(221, 34, 221), // Purple
+    RGBto565(17, 221, 0),   // Green
+    RGBto565(17, 221, 0),   // Green
+    RGBto565(221, 34, 221), // Purple
+    RGBto565(34, 34, 255),  // Medium Blue ?
+    RGBto565(255, 102, 0),  // Orange
+    RGBto565(255, 102, 0),  // Orange
+    RGBto565(34, 34, 255),  // Medium Blue ?
     LCD_WHITE,
 };
 
-typedef enum
-{
-    VIDEO_TEXT_MODE = 0,
-    VIDEO_GRAPHICS_MODE = 1,
+static const uint16_t lcolor[16] = {
+    RGBto565(0, 0, 0),       // Black
+    RGBto565(221, 0, 51),    // Magenta
+    RGBto565(0, 0, 153),     // Dark Blue
+    RGBto565(221, 34, 221),  // Purple
+    RGBto565(0, 119, 34),    // Dark Green
+    RGBto565(85, 85, 85),    // Grey 1
+    RGBto565(34, 34, 255),   // Medium Blue
+    RGBto565(102, 170, 255), // Light Blue
+    RGBto565(136, 85, 0),    // Brown
+    RGBto565(255, 102, 0),   // Orange
+    RGBto565(170, 170, 170), // Grey 2
+    RGBto565(255, 153, 136), // Pink
+    RGBto565(17, 221, 0),    // Green
+    RGBto565(255, 255, 0),   // Yellow
+    RGBto565(68, 255, 153),  // Aquamarine
+    RGBto565(255, 255, 255), // White
+};
 
-    VIDEO_PAGE_1 = 0,
-    VIDEO_PAGE_2 = 1,
-} VideoModes;
+static uint16_t switches = 0;
 
-static uint16_t __attribute__((aligned(4))) frame_buffer[VIDEO_BUFFER_SIZE] = {0};
-static uint8_t font[CHARACTER_SET_ROM_SIZE];
-static uint8_t video_mode = VIDEO_TEXT_MODE;
-static uint8_t video_page = VIDEO_PAGE_1;
 static uint16_t scan_line = 0;
 
-static unsigned char reverse(unsigned char b)
-{
-    b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
-    b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
-    b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
-    return ~b >> 1;
-}
+static uint16_t __attribute__((aligned(4))) video_frame_buffer[VIDEO_BUFFER_SIZE] = {0};
 
-void video_init(void)
-{
-    memcpy(font, ROM_CHAR, CHARACTER_SET_ROM_SIZE);
-}
+static void (*video_draw_scan_line)(uint16_t *line_data, uint16_t scanline, int x, int y) = NULL;
 
-void video_update(uint16_t address)
+void video_update_switches(uint16_t address)
 {
-    if (address >= 0xC050 && address < 0xC058)
-    {
-        // printf("VIDEO MODE: %04X\n", (int)address);
-    }
-
+    if (address < 0xC050 || address > 0xC05F)
+        return;
     switch (address)
     {
-    case 0xC050: // Display Graphics
-        video_mode = VIDEO_GRAPHICS_MODE;
+    case 0xC050: // CLRTEXT
+        if (switches & S_TEXT)
+        {
+            switches &= ~S_TEXT;
+        }
         break;
-    case 0xC051: // Display Text
-        video_mode = VIDEO_TEXT_MODE;
+    case 0xC051: // SETTEXT
+        if (!(switches & S_TEXT))
+        {
+            switches |= S_TEXT;
+        }
         break;
-    case 0xC052: // Display Full Screen
+    case 0xC052: // CLRMIXED
+        if (switches & S_MIXED)
+        {
+            switches &= ~S_MIXED;
+        }
         break;
-    case 0xC053: // Display Split Screen
+    case 0xC053: // SETMIXED
+        if (!(switches & S_MIXED))
+        {
+            switches |= S_MIXED;
+        }
         break;
-    case 0xC054: // Display Page 1
-        video_page = VIDEO_PAGE_1;
+    case 0xC054: // PAGE1
+        if (switches & S_PAGE2)
+        {
+            switches &= ~S_PAGE2;
+            if (!(switches & S_80COL))
+            {
+            }
+            else
+            {
+                // updateMemoryPages();
+            }
+        }
         break;
-    case 0xC055: // Display Page 2
-        video_page = VIDEO_PAGE_2;
+    case 0xC055: // PAGE2
+        if (!(switches & S_PAGE2))
+        {
+            switches |= S_PAGE2;
+            if (!(switches & S_80COL))
+            {
+            }
+            else
+            {
+                // updateMemoryPages();
+            }
+        }
         break;
-    case 0xC056: // Display LoRes Graphics
+    case 0xC056: // CLRHIRES
+        if (switches & S_HIRES)
+        {
+            switches &= ~S_HIRES;
+        }
         break;
-    case 0xC057: // Display HiRes Graphics
+    case 0xC057: // SETHIRES
+        if (!(switches & S_HIRES))
+        {
+            switches |= S_HIRES;
+        }
         break;
+    case 0xC05E: // DHIRES ON
+        if (!(switches & S_DHIRES))
+        {
+            switches |= S_DHIRES;
+        }
+        break;
+    case 0xC05F: // DHIRES OFF
+        if (switches & S_DHIRES)
+        {
+            switches &= ~S_DHIRES;
+        }
+        break;
+    } // switch
+    printf("%04X %04X\n", address, switches);
+}
+
+static void video_draw_T(uint8_t *video_line_data, int x, int y)
+{
+    uint16_t text_char = video_line_data[x];
+    uint16_t rom_char = text_char * TEXT_BYTES;
+    uint16_t rom_char_offset = y & TEXT_BYTES_MASK;
+    uint16_t data = ROM_CHAR[rom_char + rom_char_offset];
+    for (int i = 0; i < 7; i++)
+    {
+        uint8_t color = 9; // WHITE INDEX
+        uint8_t pixel = (data >> (i)) & 1;
+        if (pixel)
+            color = 0;
+        video_frame_buffer[x * 7 + i] |= hcolor[color];
     }
 }
 
-void video_hires_line_update(uint16_t video_line_number, uint8_t *video_line_data)
+static void video_draw_L(uint8_t *video_line_data, int x, int y)
 {
-    uint16_t data = 0;
-    uint16_t pixel_pre = 0;
-    uint16_t pixel_post = 0;
-    uint16_t data_extended = 0;
-    uint8_t address_odd = 0;
-    uint8_t color_offset = 0;
-    uint8_t color = 0;
-    uint8_t pixel = 0;
-    uint8_t pixel_left1 = 0;
-    uint8_t pixel_right1 = 0;
+    int color = video_line_data[x] >> 4;
+    for (int i = 0; i < 7; i++)
+        video_frame_buffer[x * 7 + i] = lcolor[color];
+}
 
-    if (video_line_number < VIDEO_RESOLUTION_Y)
+static void video_draw_H(uint8_t *video_line_data, int x, int y)
+{
+    uint16_t data = video_line_data[x];
+    uint16_t pixel_pre = (video_line_data[x - 1] & 0x60) >> 5;
+    uint16_t pixel_post = video_line_data[x + 1] & 3;
+    uint8_t address_odd = (x & 1) << 1;
+    uint8_t color_offset = (data & 0x80) >> 5;
+    uint16_t data_extended = pixel_pre + ((data & 0x7F) << 2) + (pixel_post << 9);
+    for (int i = 0; i < 7; i++)
     {
-        for (int j = 0; j < VIDEO_BYTES_PER_LINE; j++)
+        uint8_t color = 0; // BLACK INDEX
+        uint8_t pixel = (data_extended >> (i + 2)) & 1;
+        uint8_t pixel_left1 = (data_extended >> (i + 1)) & 1;
+        uint8_t pixel_right1 = (data_extended >> (i + 3)) & 1;
+        if (pixel)
         {
-            data = video_line_data[j];
-            pixel_pre = (video_line_data[j - 1] & 0x60) >> 5;
-            pixel_post = video_line_data[j + 1] & 3;
-            address_odd = (j & 1) << 1;
-            color_offset = (data & 0x80) >> 5;
-            data_extended = pixel_pre + ((data & 0x7F) << 2) + (pixel_post << 9);
-            for (int i = 0; i < 7; i++)
+            if (pixel_left1 || pixel_right1)
             {
-                color = BLACK;
-                pixel = (data_extended >> (i + 2)) & 1;
-                pixel_left1 = (data_extended >> (i + 1)) & 1;
-                pixel_right1 = (data_extended >> (i + 3)) & 1;
-                if (pixel)
+                color = 9; // WHITE INDEX
+            }
+            else
+            {
+                color = color_offset + address_odd + (i & 1) + 1;
+            }
+        }
+        else
+        {
+            if (pixel_left1 && pixel_right1)
+            {
+                color = color_offset + address_odd + 1 - (i & 1) + 1;
+            }
+        }
+        video_frame_buffer[x * 7 + i] |= hcolor[color];
+    }
+}
+
+static uint16_t video_get_address(bool H, uint8_t y)
+{
+    if (H)
+    {
+        return 0x2000 + (0x2000 * (bool)(switches & S_PAGE2)) + (y & 7) * 0x400 + ((y >> 3) & 7) * 0x80 + (y >> 6) * 0x28;
+    }
+    else
+    {
+        return 0x400 + (0x400 * (bool)(switches & S_PAGE2)) + (((y >> 3) & 0x07) * SCREEN_LINE_OFFSET) + ((y >> 6) * VIDEO_SEGMENT_OFFSET);
+    }
+}
+
+static void video_draw(uint8_t y)
+{
+    if (y < VIDEO_RESOLUTION_Y)
+    {
+        memset(video_frame_buffer, 0, VIDEO_BUFFER_SIZE * 2);
+        uint8_t *mem_txt = mem_get_ptr(video_get_address(0, y));
+        uint8_t *mem_hgr = mem_get_ptr(video_get_address(1, y));
+        for (int x = 0; x < VIDEO_BYTES_PER_LINE; x++)
+        {
+            if (switches & S_TEXT)
+            {
+                video_draw_T(mem_txt, x, y);
+            }
+            else if (switches & S_MIXED)
+            {
+                if (switches & S_HIRES)
                 {
-                    if (pixel_left1 || pixel_right1)
-                    {
-                        color = WHITE;
-                    }
+                    // HGR
+                    if (y < 160)
+                        video_draw_H(mem_hgr, x, y);
                     else
-                    {
-                        color = color_offset + address_odd + (i & 1) + 1;
-                    }
+                        video_draw_T(mem_txt, x, y);
                 }
                 else
                 {
-                    if (pixel_left1 && pixel_right1)
-                    {
-
-                        color = color_offset + address_odd + 1 - (i & 1) + 1;
-                    }
+                    // GR
+                    if (y < 160)
+                        video_draw_L(mem_txt, x, y);
+                    else
+                        video_draw_T(mem_txt, x, y);
                 }
-                frame_buffer[j * 7 + i] |= hcolor[color];
             }
-        }
-    }
-}
-
-void video_text_line_update(uint16_t video_line_number, uint8_t *video_line_data)
-{
-    uint16_t text_char = 0;
-    uint16_t data = 0;
-    uint8_t color = 0;
-    uint8_t pixel_color = WHITE;
-    uint8_t pixel = 0;
-    uint16_t rom_char = 0;
-    uint16_t rom_char_offset = 0;
-    if (video_line_number < VIDEO_RESOLUTION_Y)
-    {
-        for (int j = 0; j < VIDEO_BYTES_PER_LINE; j++)
-        {
-            text_char = video_line_data[j];
+            else
+            {
+                // HGR2
+                video_draw_H(mem_hgr, x, y);
+            }
 
 #if 0
-            if ((text_char & 0xC0) == 0x40)
+            if (switches & S_TEXT) // LRES
             {
-                text_char &= 0x3F;
-                if (text_char < 0x20)
+                if ((switches & S_MIXED) && (y < 160))
                 {
-                    text_char += 0x40;
+                    video_draw_L(mem_text, x, y);
+                }
+                else
+                {
+                    video_draw_T(mem_text, x, y);
                 }
             }
-#endif
-            rom_char = text_char * TEXT_BYTES;
-            rom_char_offset = video_line_number & TEXT_BYTES_MASK;
-            data = font[rom_char + rom_char_offset];
-
-#ifdef CHARSET_REVERSE
-            // reversed with pytnon script
-            // data = reverse(data); // ПРАВЕЦ ... optimization ?
-#endif
-
-            for (int i = 0; i < 7; i++)
+            else // HRES
             {
-                color = pixel_color;
-                pixel = (data >> (i)) & 1;
-                if (pixel)
-                    color = BLACK;
-                frame_buffer[j * 7 + i] |= hcolor[color];
+                if (switches & S_MIXED && y > 159)
+                {
+                    // video_draw_T(data_LRes, x, y);
+                }
+                else
+                {
+                    // video_draw_H(data_HRes, x, y);
+                }
             }
+
+            // if (switches & S_MIXED && y > 159) video_draw_T(data_LRes, x, y);
+#endif
         }
-    }
-}
 
-void video_scan_line_set(uint16_t line)
-{
-    scan_line = line;
-}
-
-void video_buffer_clear(void)
-{
-    memset(frame_buffer, 0, VIDEO_BUFFER_SIZE * 2);
-}
-
-void video_buffer_get(uint16_t *buffer)
-{
-    memcpy(buffer, frame_buffer, VIDEO_BUFFER_SIZE * 2);
-}
-
-uint16_t video_address_get(void)
-{
-    uint16_t address;
-    if (video_mode == VIDEO_TEXT_MODE)
-    {
-        address = 0x400 + (0x400 * video_page) +
-                  (((scan_line >> 3) & 0x07) * SCREEN_LINE_OFFSET) +
-                  ((scan_line >> 6) * VIDEO_SEGMENT_OFFSET);
-    }
-    else
-    {
-        address = 0x2000 + (0x2000 * video_page) +
-                  (scan_line & 7) * 0x400 +
-                  ((scan_line >> 3) & 7) * 0x80 +
-                  (scan_line >> 6) * 0x28;
-    }
-    return address;
-}
-
-void video_line_data_get(uint8_t *video_line_data)
-{
-    if (video_mode == VIDEO_TEXT_MODE)
-    {
-        video_text_line_update(scan_line, video_line_data);
-    }
-    else
-    {
-        video_hires_line_update(scan_line, video_line_data);
+        if (video_draw_scan_line)
+            video_draw_scan_line(video_frame_buffer, y, VIDEO_RESOLUTION_X, VIDEO_RESOLUTION_Y);
     }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-static uint8_t line_data[VIDEO_BYTES_PER_LINE] = {0}; // [40]
-static uint16_t video_address = 0x2000;
-
-static void draw_scanline(uint16_t *bmp, int scanline)
+static void xxxxlcd_draw_scanline(uint16_t *bmp, uint16_t scanline)
 {
-    if (scanline < 0 || scanline >= 240)
-        return;
-    int xoffset = (320 - VIDEO_RESOLUTION_X) / 2;
-    int yoffset = (240 - VIDEO_RESOLUTION_Y) / 2;
-    lcd_drawImage(xoffset, scanline + yoffset, VIDEO_RESOLUTION_X, 1, bmp);
+    if (scanline < lcd_get_height())
+    {
+        int xoffset = (320 - VIDEO_RESOLUTION_X) / 2;
+        int yoffset = (240 - VIDEO_RESOLUTION_Y) / 2;
+        lcd_drawImage(xoffset, scanline + yoffset, VIDEO_RESOLUTION_X, 1, bmp);
+    }
 }
 
-uint32_t lcd_render_line(void)
+uint32_t video_render_line(int y)
 {
     uint32_t begin = micros();
-    video_scan_line_set(scan_line);
-    video_buffer_clear();
-    video_address = video_address_get();
-    memcpy(line_data, mem_get_ptr(video_address), VIDEO_BYTES_PER_LINE);
-    video_line_data_get(line_data);
-    video_buffer_get(frame_buffer);
-    draw_scanline(frame_buffer, scan_line);
+    scan_line = y;
+    video_draw(scan_line);
     if (++scan_line > 192)
     {
         scan_line = 0;
@@ -273,20 +309,16 @@ uint32_t lcd_render_line(void)
     return micros() - begin; // 102 uS
 }
 
-uint32_t lcd_render(void)
+uint32_t video_render_screen(void)
 {
     uint32_t begin = millis();
-    for (int i = 0; i < VIDEO_RESOLUTION_Y; i++)
-    {
-        video_scan_line_set(i);
-        video_buffer_clear();
-        video_address = video_address_get();
-        memcpy(line_data, mem_get_ptr(video_address), VIDEO_BYTES_PER_LINE);
-        video_line_data_get(line_data);
-        video_buffer_get(frame_buffer);
-        draw_scanline(frame_buffer, i);
-    }
-
+    for (int y = 0; y < VIDEO_RESOLUTION_Y; y++)
+        video_draw(y);
     LATEINV = 1 << 4;
     return millis() - begin; // 25 mS
+}
+
+void video_init(void)
+{
+    video_draw_scan_line = lcd_draw_scan_line;
 }

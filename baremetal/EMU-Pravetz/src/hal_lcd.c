@@ -113,13 +113,6 @@ void __attribute__((vector(_DMA0_VECTOR), interrupt(IPL4AUTO), nomips16)) DMA_0_
 
 // LCD DMA ////////////////////////////////////////////////////////////////////
 
-static void SPI_DMA_START(void)
-{
-    DMA_ChannelEnable(_DCH0INT_CHBCIE_MASK);
-    while (IRQ_IsEnabled(_DMA0_VECTOR))
-        continue;
-}
-
 static size_t SPI_DMA_FILL(uint16_t color, size_t size_bytes)
 {
     if (size_bytes > sizeof(dma_buffer))
@@ -207,6 +200,9 @@ void lcd_write_data(uint16_t d, bool mode)
     spi_mode(mode);
     spi_send(d);
 }
+
+uint16_t lcd_get_width() { return lcd_width; }
+uint16_t lcd_get_height() { return lcd_height; }
 
 void lcd_setAddrWindow(uint16_t xs, uint16_t ys, uint16_t xe, uint16_t ye)
 {
@@ -346,4 +342,14 @@ void lcd_init(int rot)
     lcd_setRotation(rot);
 }
 
-// EOF ////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void lcd_draw_scan_line(uint16_t *line_data, uint16_t scanline, int max_x, int max_y)
+{
+    if (scanline < lcd_get_height())
+    {
+        int xoffset = (lcd_width - max_x) / 2;
+        int yoffset = (lcd_height - max_y) / 2;
+        lcd_drawImage(xoffset, scanline + yoffset, max_x, 1, line_data); // centered 
+    }
+}
