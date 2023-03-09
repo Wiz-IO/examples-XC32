@@ -19,7 +19,7 @@
 #define LORES_PIXEL_HEIGHT      4
 
 void video_init(void);
-void video_update_switches(uint16_t address);
+uint8_t video_update_switches(uint16_t address);
 uint32_t video_render_line(int line);
 uint32_t video_render_screen(void);
 

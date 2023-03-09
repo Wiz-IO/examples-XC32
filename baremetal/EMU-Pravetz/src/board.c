@@ -108,7 +108,9 @@ void board_init(void)
     // Unlock
     SYSKEY = 0x33333333;
     asm volatile("ei");
+    
     TRISECLR = 1 << LED;
+    TRISGbits.TRISG12 = 1;
 }
 
 static unsigned int _excep_code;

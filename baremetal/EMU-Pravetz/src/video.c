@@ -58,10 +58,8 @@ static uint16_t __attribute__((aligned(4))) video_frame_buffer[VIDEO_BUFFER_SIZE
 
 static void (*video_draw_scan_line)(uint16_t *line_data, uint16_t scanline, int x, int y) = NULL;
 
-void video_update_switches(uint16_t address)
+uint8_t video_update_switches(uint16_t address)
 {
-    if (address < 0xC050 || address > 0xC05F)
-        return;
     switch (address)
     {
     case 0xC050: // CLRTEXT
@@ -139,15 +137,28 @@ void video_update_switches(uint16_t address)
         }
         break;
     } // switch
-    printf("%04X %04X\n", address, switches);
+    // printf("%04X %04X\n", address, switches);
+    return 0;
 }
 
 static void video_draw_T(uint8_t *video_line_data, int x, int y)
 {
+    static uint32_t T = 0;
+    static bool flash = false;
+    if (millis() - T > 500)
+    {
+        T = millis();
+        flash = !flash;
+    }
+
     uint16_t text_char = video_line_data[x];
+    if (text_char == 0x60)
+        text_char = (flash) ? 0x60 : 0xff;
+
     uint16_t rom_char = text_char * TEXT_BYTES;
     uint16_t rom_char_offset = y & TEXT_BYTES_MASK;
     uint16_t data = ROM_CHAR[rom_char + rom_char_offset];
+
     for (int i = 0; i < 7; i++)
     {
         uint8_t color = 9; // WHITE INDEX
@@ -250,33 +261,6 @@ static void video_draw(uint8_t y)
                 // HGR2
                 video_draw_H(mem_hgr, x, y);
             }
-
-#if 0
-            if (switches & S_TEXT) // LRES
-            {
-                if ((switches & S_MIXED) && (y < 160))
-                {
-                    video_draw_L(mem_text, x, y);
-                }
-                else
-                {
-                    video_draw_T(mem_text, x, y);
-                }
-            }
-            else // HRES
-            {
-                if (switches & S_MIXED && y > 159)
-                {
-                    // video_draw_T(data_LRes, x, y);
-                }
-                else
-                {
-                    // video_draw_H(data_HRes, x, y);
-                }
-            }
-
-            // if (switches & S_MIXED && y > 159) video_draw_T(data_LRes, x, y);
-#endif
         }
 
         if (video_draw_scan_line)
@@ -285,16 +269,6 @@ static void video_draw(uint8_t y)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-
-static void xxxxlcd_draw_scanline(uint16_t *bmp, uint16_t scanline)
-{
-    if (scanline < lcd_get_height())
-    {
-        int xoffset = (320 - VIDEO_RESOLUTION_X) / 2;
-        int yoffset = (240 - VIDEO_RESOLUTION_Y) / 2;
-        lcd_drawImage(xoffset, scanline + yoffset, VIDEO_RESOLUTION_X, 1, bmp);
-    }
-}
 
 uint32_t video_render_line(int y)
 {
