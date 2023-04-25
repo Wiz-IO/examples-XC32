@@ -99,9 +99,7 @@ void vga_init()
 {
     printf("FB: %p\n", frame_buffer);
 
-    TRISECLR = 134; // TODO enable pixel ports
-
-    TRISFCLR = 1 << 2; // TODO enable pixel ports
+    TRISECLR = 134; // TODO Enable pixel ports LATE[0-7]
 
     V_INIT(); // H init in board.c
 
